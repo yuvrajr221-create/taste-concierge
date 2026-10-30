@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Taste Concierge</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--ink:#eceef3;--mut:#9aa1b2;--acc:#ff7a3d;--line:#262a34}
+@media (prefers-color-scheme:light){:root{--bg:#f6f4ef;--card:#fff;--ink:#16181d;--mut:#667085;--line:#e4e1d8}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif;padding:16px;max-width:760px;margin-inline:auto}
+h1{font-size:1.5rem;margin:.2em 0}
+p.sub{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+input,select,button{font:inherit;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:10px}
+input{flex:1;min-width:140px}
+button{background:var(--acc);color:#fff;border:0;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:400}
+button:disabled{opacity:.5}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:4px 10px;font-size:.9rem}
+.chip b{cursor:pointer;margin-left:6px;color:var(--mut)}
+.hit{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);cursor:pointer}
+.hit:first-child{border-top:0}
+.hit img,.ph{width:44px;height:44px;border-radius:8px;object-fit:cover;background:var(--line);flex:none}
+.small{color:var(--mut);font-size:.85rem}
+.item{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.item:first-of-type{border-top:0}
+.aff{color:var(--acc);font-weight:700}
+.tag{display:inline-block;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:2px 4px 0 0;font-size:.78rem;color:var(--mut)}
+input[type=checkbox]{flex:none;min-width:0;width:18px;height:18px;padding:0;margin:0}
+#targets{display:flex;flex-wrap:wrap;gap:8px 14px}
+label.t{display:inline-flex;gap:6px;align-items:center}
+#err{color:#ff5d5d}
+</style>
+</head>
+<body>
+<h1>🎯 Taste Concierge</h1>
+<p class="sub">अपनी पसंद बताइए (फ़िल्म, गाना, जगह...) — Qloo के taste graph से बिल्कुल अलग categories में recommendations।</p>
+
+<div class="card">
+  <div class="row">
+    <select id="type"></select>
+    <input id="q" placeholder="जैसे: Interstellar, Arijit Singh, Starbucks…" autocomplete="off">
+    <button id="go">खोजें</button>
+  </div>
+  <div id="hits"></div>
+  <div class="chips" id="chips"></div>
+</div>
+
+<div class="card">
+  <div class="small" style="margin-bottom:6px">इनमें recommendations चाहिए:</div>
+  <div id="targets"></div>
+  <div class="row" style="margin-top:10px"><button id="rec" disabled>Recommend करें</button><button id="clr" class="ghost">साफ़ करें</button></div>
+  <div id="err"></div>
+</div>
+
+<div id="out"></div>
+<p class="small">स्रोत: सभी recommendations, affinity scores और tags सीधे Qloo API से आते हैं; हम उन्हें बदलते नहीं। Affinity इस बात का संकेत है कि पसंदों का ऐसा समूह आम तौर पर क्या पसंद करता है, यह किसी एक व्यक्ति की पसंद की गारंटी या संभावना नहीं है। इस ऐप में कोई निजी जानकारी Qloo को नहीं भेजी जाती।</p>
+
+<script>
+const $=s=>document.querySelector(s);
+const seeds=new Map();
+let TYPES={};
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api=async(u,o)=>{const r=await fetch(u,o);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j};
+
+(async()=>{
+  const st=await api('/api/status');TYPES=st.types;
+  $('#type').innerHTML=Object.entries(TYPES).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  $('#targets').innerHTML=Object.entries(TYPES).map(([k,v])=>`<label class="t"><input type="checkbox" value="${k}" ${['urn:entity:movie','urn:entity:artist','urn:entity:place'].includes(k)?'checked':''}> ${v}</label>`).join('');
+  if(!st.keyConfigured)$('#err').textContent='⚠️ QLOO_API_KEY सेट नहीं है — .env फ़ाइल देखें।';
+})();
+
+function drawChips(){
+  $('#chips').innerHTML=[...seeds.values()].map(s=>`<span class="chip">${esc(s.name)}<b data-id="${esc(s.id)}">×</b></span>`).join('');
+  $('#rec').disabled=seeds.size===0;
+}
+$('#chips').onclick=e=>{const id=e.target.dataset?.id;if(id){seeds.delete(id);drawChips()}};
+
+async function doSearch(){
+  const q=$('#q').value.trim();if(q.length<2)return;
+  $('#hits').innerHTML='<div class="small">खोज रहे हैं…</div>';$('#err').textContent='';
+  try{
+    const {results}=await api(`/api/search?q=${encodeURIComponent(q)}&type=${encodeURIComponent($('#type').value)}`);
+    $('#hits').innerHTML=results.length?results.map((r,i)=>`<div class="hit" data-i="${i}">${r.image?`<img src="${esc(r.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:'<div class="ph"></div>'}<div><div>${esc(r.name)}</div><div class="small">${esc(r.description).slice(0,90)}</div></div></div>`).join(''):'<div class="small">कुछ नहीं मिला।</div>';
+    $('#hits').onclick=e=>{const h=e.target.closest('.hit');if(!h)return;const r=results[h.dataset.i];seeds.set(r.id,r);drawChips();$('#hits').innerHTML='';$('#q').value='';$('#q').focus()};
+  }catch(e){$('#hits').innerHTML='';$('#err').textContent=e.message}
+}
+$('#go').onclick=doSearch;
+$('#q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch()});
+
+$('#clr').onclick=()=>{seeds.clear();drawChips();$('#out').innerHTML=''};
+
+$('#rec').onclick=async()=>{
+  const targets=[...document.querySelectorAll('#targets input:checked')].map(i=>i.value);
+  if(!targets.length){$('#err').textContent='कम से कम एक category चुनें';return}
+  $('#err').textContent='';$('#rec').disabled=true;$('#out').innerHTML='<div class="card small">Qloo से पूछ रहे हैं…</div>';
+  try{
+    const {sections}=await api('/api/recommend',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seeds:[...seeds.values()].map(({id,name})=>({id,name})),targets})});
+    $('#out').innerHTML=sections.map(s=>`<div class="card"><h3 style="margin:0 0 6px">${esc(s.label)}</h3>${s.error?`<div class="small">${esc(s.error)}</div>`:''}${s.items.map(it=>`<div class="item">${it.image?`<img class="ph" src="${esc(it.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:'<div class="ph"></div>'}<div><div><b>${esc(it.name)}</b>${it.year?` <span class="small">(${esc(it.year)})</span>`:''}${it.affinity!=null?` <span class="aff" title="Qloo affinity score for this group of favorites, not a probability for you">affinity ${Math.round(it.affinity*100)}</span>`:''}</div><div class="small">${esc(it.description).slice(0,120)}</div>${it.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div></div>`).join('')||(s.error?'':'<div class="small">कोई result नहीं।</div>')}</div>`).join('');
+  }catch(e){$('#err').textContent=e.message;$('#out').innerHTML=''}
+  $('#rec').disabled=seeds.size===0;
+};
+</script>
+</body>
+</html>
